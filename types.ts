@@ -1,4 +1,8 @@
 
+export interface User {
+  username: string;
+}
+
 export interface GrammarEntry {
   id: string;
   source: string; // The original text or a placeholder for the image

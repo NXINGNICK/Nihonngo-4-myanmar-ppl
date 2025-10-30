@@ -216,6 +216,7 @@ const Library: React.FC<LibraryProps> = ({ grammarEntries, vocabularyEntries, on
             <Tabs tabs={TABS} activeTab={activeTab} onTabClick={setActiveTab} />
             
             <div 
+                key={activeTab}
                 className="space-y-4"
                 onDrop={handleDrop}
                 onDragOver={(e) => e.preventDefault()}
