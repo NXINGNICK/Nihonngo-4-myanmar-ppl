@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback } from 'react';
 import Header from './components/Header';
 import GrammarExplainer from './components/GrammarExplainer';
@@ -60,19 +59,34 @@ const App: React.FC = () => {
         });
     }, []);
 
+    const onGrammarReorder = useCallback((reorderedList: GrammarEntry[]) => {
+        setGrammarLibrary(reorderedList);
+        localStorage.setItem('grammarLibrary', JSON.stringify(reorderedList));
+    }, []);
+
+    const onVocabularyReorder = useCallback((reorderedList: VocabularyEntry[]) => {
+        setVocabularyLibrary(reorderedList);
+        localStorage.setItem('vocabularyLibrary', JSON.stringify(reorderedList));
+    }, []);
+
 
     const renderContent = () => {
         switch (activeView) {
             case 'grammar':
                 return <GrammarExplainer onAddToLibrary={addToGrammarLibrary} />;
             case 'vocabulary':
-                return <VocabularyExplainer onAddToLibrary={addToVocabularyLibrary} />;
+                return <VocabularyExplainer 
+                            onAddToLibrary={addToVocabularyLibrary} 
+                            vocabularyEntries={vocabularyLibrary} 
+                        />;
             case 'library':
                 return <Library 
                             grammarEntries={grammarLibrary} 
                             vocabularyEntries={vocabularyLibrary}
                             onDeleteGrammar={deleteGrammarEntry}
                             onDeleteVocabulary={deleteVocabularyEntry}
+                            onReorderGrammar={onGrammarReorder}
+                            onReorderVocabulary={onVocabularyReorder}
                         />;
             default:
                 return <GrammarExplainer onAddToLibrary={addToGrammarLibrary} />;

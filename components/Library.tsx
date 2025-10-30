@@ -56,6 +56,8 @@ interface LibraryProps {
     vocabularyEntries: VocabularyEntry[];
     onDeleteGrammar: (id: string) => void;
     onDeleteVocabulary: (id: string) => void;
+    onReorderGrammar: (entries: GrammarEntry[]) => void;
+    onReorderVocabulary: (entries: VocabularyEntry[]) => void;
 }
 
 const LibraryCard: React.FC<{
@@ -67,13 +69,13 @@ const LibraryCard: React.FC<{
     const [isExpanded, setIsExpanded] = useState(false);
 
     return (
-        <div className="bg-slate-800 rounded-lg shadow-lg p-4 transition-all duration-300 animate-fade-in-up">
-            <div className="flex justify-between items-start">
+        <div className="bg-slate-800 rounded-lg shadow-lg p-4 transition-all duration-300 cursor-grab">
+             <div className="flex justify-between items-start">
                 <div>
                     <h3 className="font-bold text-sky-400 break-all">{title}</h3>
                     <p className="text-xs text-slate-500 mt-1">{date}</p>
                 </div>
-                <div className="flex items-center space-x-2 flex-shrink-0">
+                <div className="flex items-center space-x-2 flex-shrink-0 ml-4">
                      <button 
                         onClick={() => setIsExpanded(!isExpanded)} 
                         className="p-1 text-slate-400 hover:text-white transition-colors"
@@ -103,53 +105,150 @@ const LibraryCard: React.FC<{
     )
 }
 
-const Library: React.FC<LibraryProps> = ({ grammarEntries, vocabularyEntries, onDeleteGrammar, onDeleteVocabulary }) => {
+const Library: React.FC<LibraryProps> = ({ grammarEntries, vocabularyEntries, onDeleteGrammar, onDeleteVocabulary, onReorderGrammar, onReorderVocabulary }) => {
     const [activeTab, setActiveTab] = useState('grammar');
+    const [draggedItemId, setDraggedItemId] = useState<string | null>(null);
+    const [dropIndicator, setDropIndicator] = useState<{ index: number; position: 'top' | 'bottom' } | null>(null);
 
     const TABS = [
         { id: 'grammar', label: `Grammar (${grammarEntries.length})` },
         { id: 'vocabulary', label: `Vocabulary (${vocabularyEntries.length})` },
     ];
     
-    const sortedGrammarEntries = [...grammarEntries].sort((a, b) => b.timestamp - a.timestamp);
-    const sortedVocabularyEntries = [...vocabularyEntries].sort((a, b) => b.timestamp - a.timestamp);
+    const handleDragStart = (e: React.DragEvent, id: string) => {
+        setDraggedItemId(id);
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', id); // Required for Firefox
+        document.body.classList.add('grabbing');
+    };
+
+    const handleDragEnd = () => {
+        setDraggedItemId(null);
+        setDropIndicator(null);
+        document.body.classList.remove('grabbing');
+    };
+    
+    const handleDragOver = (e: React.DragEvent, index: number) => {
+        e.preventDefault();
+        if (draggedItemId === null) return;
+        
+        const currentEntries = activeTab === 'grammar' ? grammarEntries : vocabularyEntries;
+        if (currentEntries[index]?.id === draggedItemId) {
+            setDropIndicator(null);
+            return;
+        }
+
+        const targetElement = e.currentTarget as HTMLElement;
+        const rect = targetElement.getBoundingClientRect();
+        const middleY = rect.top + rect.height / 2;
+        const position = e.clientY < middleY ? 'top' : 'bottom';
+        
+        if (dropIndicator?.index !== index || dropIndicator?.position !== position) {
+            setDropIndicator({ index, position });
+        }
+    };
+    
+    // Fix: Separated logic for grammar and vocabulary reordering to resolve TypeScript type errors.
+    const handleDrop = (e: React.DragEvent) => {
+        e.preventDefault();
+        if (!draggedItemId || dropIndicator === null) {
+            handleDragEnd();
+            return;
+        }
+
+        if (activeTab === 'grammar') {
+            const entries = [...grammarEntries];
+            const draggedIndex = entries.findIndex(item => item.id === draggedItemId);
+            let targetIndex = dropIndicator.index;
+            
+            if (draggedIndex === -1 || draggedIndex === targetIndex) {
+                handleDragEnd();
+                return;
+            }
+            
+            const [draggedItem] = entries.splice(draggedIndex, 1);
+            
+            if (draggedIndex < targetIndex) {
+                targetIndex--;
+            }
+
+            if (dropIndicator.position === 'top') {
+                entries.splice(targetIndex, 0, draggedItem);
+            } else {
+                entries.splice(targetIndex + 1, 0, draggedItem);
+            }
+            
+            onReorderGrammar(entries);
+        } else { // activeTab === 'vocabulary'
+            const entries = [...vocabularyEntries];
+            const draggedIndex = entries.findIndex(item => item.id === draggedItemId);
+            let targetIndex = dropIndicator.index;
+            
+            if (draggedIndex === -1 || draggedIndex === targetIndex) {
+                handleDragEnd();
+                return;
+            }
+            
+            const [draggedItem] = entries.splice(draggedIndex, 1);
+            
+            if (draggedIndex < targetIndex) {
+                targetIndex--;
+            }
+
+            if (dropIndicator.position === 'top') {
+                entries.splice(targetIndex, 0, draggedItem);
+            } else {
+                entries.splice(targetIndex + 1, 0, draggedItem);
+            }
+            
+            onReorderVocabulary(entries);
+        }
+        
+        handleDragEnd();
+    };
+
+    const currentEntries = activeTab === 'grammar' ? grammarEntries : vocabularyEntries;
+    const currentOnDelete = activeTab === 'grammar' ? onDeleteGrammar : onDeleteVocabulary;
 
     return (
         <div className="max-w-4xl mx-auto">
             <h1 className="text-3xl font-bold text-indigo-400 mb-6">Saved Library</h1>
             <Tabs tabs={TABS} activeTab={activeTab} onTabClick={setActiveTab} />
             
-            <div className="space-y-4">
-                {activeTab === 'grammar' && (
-                    sortedGrammarEntries.length > 0 ? (
-                        sortedGrammarEntries.map(entry => (
-                            <LibraryCard 
-                                key={entry.id}
-                                title={entry.source.length > 50 ? `${entry.source.substring(0, 50)}...` : entry.source}
-                                content={entry.explanation}
-                                date={new Date(entry.timestamp).toLocaleString()}
-                                onDelete={() => onDeleteGrammar(entry.id)}
-                            />
-                        ))
-                    ) : (
-                        <p className="text-center text-slate-500 py-10">Your saved grammar explanations will appear here.</p>
-                    )
-                )}
-
-                {activeTab === 'vocabulary' && (
-                    sortedVocabularyEntries.length > 0 ? (
-                        sortedVocabularyEntries.map(entry => (
-                            <LibraryCard
-                                key={entry.id}
-                                title={entry.word}
-                                content={entry.explanation}
-                                date={new Date(entry.timestamp).toLocaleString()}
-                                onDelete={() => onDeleteVocabulary(entry.id)}
-                            />
-                        ))
-                    ) : (
-                        <p className="text-center text-slate-500 py-10">Your saved vocabulary explanations will appear here.</p>
-                    )
+            <div 
+                className="space-y-4"
+                onDrop={handleDrop}
+                onDragOver={(e) => e.preventDefault()}
+                onDragLeave={() => setDropIndicator(null)}
+            >
+                {currentEntries.length === 0 ? (
+                    <p className="text-center text-slate-500 py-10">Your saved {activeTab} explanations will appear here.</p>
+                ) : (
+                    currentEntries.map((entry, index) => (
+                       <div
+                            key={entry.id}
+                            draggable
+                            onDragStart={(e) => handleDragStart(e, entry.id)}
+                            onDragOver={(e) => handleDragOver(e, index)}
+                            onDragEnd={handleDragEnd}
+                            className="relative"
+                        >
+                            {dropIndicator?.index === index && dropIndicator?.position === 'top' && (
+                                <div className="absolute -top-2 left-0 right-0 h-1.5 bg-sky-400 rounded-full z-10" />
+                            )}
+                            <div className={`transition-opacity duration-300 ${draggedItemId === entry.id ? 'opacity-30' : 'opacity-100'}`}>
+                                <LibraryCard 
+                                    title={'source' in entry ? (entry.source.length > 50 ? `${entry.source.substring(0, 50)}...` : entry.source) : entry.word}
+                                    content={entry.explanation}
+                                    date={new Date(entry.timestamp).toLocaleString()}
+                                    onDelete={() => currentOnDelete(entry.id)}
+                                />
+                            </div>
+                             {dropIndicator?.index === index && dropIndicator?.position === 'bottom' && (
+                                <div className="absolute -bottom-2 left-0 right-0 h-1.5 bg-sky-400 rounded-full z-10" />
+                            )}
+                        </div>
+                    ))
                 )}
             </div>
         </div>

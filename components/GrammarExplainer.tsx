@@ -40,7 +40,7 @@ const GrammarExplainer: React.FC<GrammarExplainerProps> = ({ onAddToLibrary }) =
     const [fileName, setFileName] = useState<string>('');
     const [isLoading, setIsLoading] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
-    const [results, setResults] = useState<ParsedGrammarEntry[] | null>(null);
+    const [results, setResults] = useState<ParsedGrammarEntry[]>([]);
     
     const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
@@ -60,27 +60,44 @@ const GrammarExplainer: React.FC<GrammarExplainerProps> = ({ onAddToLibrary }) =
 
         setIsLoading(true);
         setError(null);
-        setResults(null);
+        setResults([]);
 
         try {
-            const rawExplanation = await explainGrammar(input);
+            const stream = explainGrammar(input);
+            let buffer = '';
             
-            // Parse the single string response into multiple entries
-            const content = rawExplanation.replace("Grammar form. Found.", "").trim();
-            if (content) {
-                const parts = content.split('---');
-                const parsed = parts
-                    .map(part => {
-                        const lines = part.trim().split('\n');
+            for await (const chunk of stream) {
+                buffer += chunk;
+
+                const startMarker = "Grammar form. Found.";
+                if (buffer.includes(startMarker)) {
+                    buffer = buffer.replace(startMarker, "").trim();
+                }
+
+                while (buffer.includes('---')) {
+                    const parts = buffer.split('---');
+                    const completePart = parts.shift();
+                    buffer = parts.join('---');
+
+                    if (completePart && completePart.trim()) {
+                        const lines = completePart.trim().split('\n');
                         const form = lines[0]?.trim() || 'Unknown Form';
                         const explanation = lines.slice(1).join('\n').trim();
-                        return { form, explanation };
-                    })
-                    .filter(entry => entry.explanation && entry.form);
-                
-                setResults(parsed);
-            } else {
-                 setResults([]);
+                        if (explanation && form) {
+                            setResults(prev => [...prev, { form, explanation }]);
+                        }
+                    }
+                }
+            }
+            
+            // Process any remaining content in the buffer
+            if (buffer.trim()) {
+                const lines = buffer.trim().split('\n');
+                const form = lines[0]?.trim() || 'Unknown Form';
+                const explanation = lines.slice(1).join('\n').trim();
+                 if (explanation && form) {
+                    setResults(prev => [...prev, { form, explanation }]);
+                }
             }
 
         } catch (err) {
@@ -94,7 +111,6 @@ const GrammarExplainer: React.FC<GrammarExplainerProps> = ({ onAddToLibrary }) =
         if (results) {
             results.forEach(result => {
                 onAddToLibrary({
-                    // The source is now the grammar form itself for better library organization
                     source: result.form.replace(/\*\*/g, ''), // remove markdown for title
                     explanation: result.explanation,
                 });
@@ -146,10 +162,14 @@ const GrammarExplainer: React.FC<GrammarExplainerProps> = ({ onAddToLibrary }) =
             
             {error && <p className="mt-4 text-center text-red-400">{error}</p>}
             
-            {results && (
-                <div className="mt-6 space-y-4 animate-fade-in-up">
+            {(results.length > 0 || isLoading) && (
+                <div className="mt-6 space-y-4">
                     {results.map((result, index) => (
-                        <div key={index} className="bg-slate-800 rounded-lg shadow-xl p-6">
+                        <div 
+                           key={index} 
+                           className="bg-slate-800 rounded-lg shadow-xl p-6 animate-fade-in-up"
+                           style={{ animationDelay: `${index * 100}ms` }}
+                        >
                             <h3 className="text-lg font-bold text-slate-100 mb-3">
                                <SimpleMarkdown text={result.form} />
                             </h3>
@@ -158,7 +178,7 @@ const GrammarExplainer: React.FC<GrammarExplainerProps> = ({ onAddToLibrary }) =
                             </div>
                         </div>
                     ))}
-                     {results.length > 0 && (
+                     {results.length > 0 && !isLoading && (
                         <div className="mt-6 border-t border-slate-700 pt-4">
                             <button onClick={handleSave} className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 rounded-lg transition duration-200">
                                 Save All to Library

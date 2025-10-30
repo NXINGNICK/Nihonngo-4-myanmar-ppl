@@ -1,4 +1,3 @@
-
 import { GoogleGenAI, GenerateContentResponse, Part } from "@google/genai";
 
 const API_KEY = process.env.API_KEY;
@@ -28,7 +27,7 @@ const BASE_PROMPT = `You are a friendly and expert Japanese language tutor, flue
 Follow the specific formatting instructions for each task precisely. Use markdown for emphasis where appropriate.
 `;
 
-export const explainGrammar = async (input: string | File): Promise<string> => {
+export async function* explainGrammar(input: string | File): AsyncGenerator<string, void, undefined> {
     try {
         const parts: Part[] = [];
         let promptText = `Analyze the following Japanese content. Identify every grammar pattern present, including simple particles, verb conjugations, and complex structures. Handle multiple and overlapping patterns.
@@ -61,7 +60,7 @@ Content to analyze is below:
             parts.push({ text: promptText }, imagePart);
         }
 
-        const response: GenerateContentResponse = await ai.models.generateContent({
+        const response = await ai.models.generateContentStream({
             model: model,
             contents: { parts: parts },
             config: {
@@ -69,41 +68,67 @@ Content to analyze is below:
             }
         });
 
-        return response.text;
+        for await (const chunk of response) {
+            yield chunk.text;
+        }
+
     } catch (error) {
         console.error("Error explaining grammar:", error);
         if (error instanceof Error) {
-            return `Error: ${error.message}`;
+            throw new Error(`Error: ${error.message}`);
         }
-        return "An unknown error occurred while explaining grammar.";
+        throw new Error("An unknown error occurred while explaining grammar.");
     }
 };
 
-export const explainVocabulary = async (word: string): Promise<string> => {
+export async function* explainVocabulary(input: string | File): AsyncGenerator<string, void, undefined> {
     try {
-        const prompt = `Explain the Japanese vocabulary word: **${word}**
+        const parts: Part[] = [];
+        const promptText = `Analyze the provided Japanese content (text or image). Identify the key vocabulary words (nouns, verbs in dictionary form, i-adjectives, na-adjectives). Ignore common, standalone particles like は, が, を. For verbs, provide their dictionary form.
 
-Provide the following:
-1.  **Definition (Burmese):** A clear definition in natural, conversational Burmese. Explain any nuances.
-2.  **Example Sentences:** Provide two distinct examples of how to use this word. For each example, include:
-    *   Japanese sentence (with furigana).
-    *   Romaji transliteration.
-    *   A natural Burmese translation.
+Start your entire response with the exact line: "Vocabulary. Found."
+
+Then, for each distinct vocabulary word you identify, provide the following format:
+- A line with the vocabulary word enclosed in bold markdown (e.g., **単語**).
+- Following that, provide:
+    1. **Definition (Burmese):** A clear definition in natural, conversational Burmese.
+    2. **Example Sentences:** Provide two distinct examples. For each example, include:
+        * Japanese sentence (with furigana).
+        * Romaji transliteration.
+        * A natural Burmese translation.
+
+Separate each vocabulary word entry with a horizontal rule (---).
+
+If the input is a single word, just explain that word in the same format.
+
+Content to analyze is below:
+---
 `;
-        const response: GenerateContentResponse = await ai.models.generateContent({
+
+        if (typeof input === 'string') {
+            parts.push({ text: `${promptText}${input}` });
+        } else {
+            const imagePart = await fileToGenerativePart(input);
+            parts.push({ text: promptText }, imagePart);
+        }
+
+        const response = await ai.models.generateContentStream({
             model: model,
-            contents: prompt,
+            contents: { parts: parts },
             config: {
                 systemInstruction: BASE_PROMPT,
             }
         });
 
-        return response.text;
+        for await (const chunk of response) {
+            yield chunk.text;
+        }
+
     } catch (error) {
         console.error("Error explaining vocabulary:", error);
          if (error instanceof Error) {
-            return `Error: ${error.message}`;
+            throw new Error(`Error: ${error.message}`);
         }
-        return "An unknown error occurred while explaining vocabulary.";
+        throw new Error("An unknown error occurred while explaining vocabulary.");
     }
 };

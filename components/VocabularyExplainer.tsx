@@ -1,7 +1,21 @@
-
 import React, { useState, useCallback } from 'react';
 import { VocabularyEntry } from '../types';
 import { explainVocabulary } from '../services/geminiService';
+
+// A simple component to render markdown for bold text without using dangerouslySetInnerHTML
+const SimpleMarkdown: React.FC<{ text: string }> = ({ text }) => {
+    const parts = text.split(/(\*\*.*?\*\*)/g); // Split by bold tags, keeping them
+    return (
+        <>
+            {parts.map((part, index) => {
+                if (part.startsWith('**') && part.endsWith('**')) {
+                    return <strong key={index} className="text-teal-300 font-semibold">{part.slice(2, -2)}</strong>;
+                }
+                return part;
+            })}
+        </>
+    );
+};
 
 const Spinner: React.FC = () => (
     <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -10,88 +24,187 @@ const Spinner: React.FC = () => (
     </svg>
 );
 
-const ResultCard: React.FC<{ content: string; children?: React.ReactNode }> = ({ content, children }) => {
-    return (
-        <div className="mt-6 bg-slate-800 rounded-lg shadow-xl p-6 animate-fade-in-up">
-            <div className="text-slate-300 whitespace-pre-wrap leading-relaxed font-mono">{content}</div>
-            {children && <div className="mt-6 border-t border-slate-700 pt-4">{children}</div>}
-        </div>
-    );
-};
-
+interface ParsedVocabularyEntry {
+    word: string;
+    explanation: string;
+}
 
 interface VocabularyExplainerProps {
     onAddToLibrary: (entry: Omit<VocabularyEntry, 'id' | 'timestamp'>) => void;
+    vocabularyEntries: VocabularyEntry[];
 }
 
-const VocabularyExplainer: React.FC<VocabularyExplainerProps> = ({ onAddToLibrary }) => {
-    const [wordInput, setWordInput] = useState<string>('');
+const VocabularyExplainer: React.FC<VocabularyExplainerProps> = ({ onAddToLibrary, vocabularyEntries }) => {
+    const [textInput, setTextInput] = useState<string>('');
+    const [fileInput, setFileInput] = useState<File | null>(null);
+    const [fileName, setFileName] = useState<string>('');
     const [isLoading, setIsLoading] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
-    const [result, setResult] = useState<string | null>(null);
+    const [results, setResults] = useState<ParsedVocabularyEntry[]>([]);
+    const [hasFinished, setHasFinished] = useState(false);
+
+    const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (file) {
+            setFileInput(file);
+            setFileName(file.name);
+            setTextInput('');
+        }
+    };
 
     const handleSubmit = useCallback(async () => {
-        if (!wordInput.trim()) {
-            setError("Please enter a Japanese word.");
+        const input = fileInput || textInput;
+        if (!input) {
+            setError("Please provide text or an image.");
             return;
         }
 
         setIsLoading(true);
         setError(null);
-        setResult(null);
+        setResults([]);
+        setHasFinished(false);
 
         try {
-            const explanation = await explainVocabulary(wordInput.trim());
-            setResult(explanation);
+            const stream = explainVocabulary(input);
+            let buffer = '';
+            const existingWords = new Set(vocabularyEntries.map(entry => entry.word));
+            
+            for await (const chunk of stream) {
+                buffer += chunk;
+                
+                const startMarker = "Vocabulary. Found.";
+                if (buffer.includes(startMarker)) {
+                    buffer = buffer.replace(startMarker, "").trim();
+                }
+
+                while (buffer.includes('---')) {
+                    const parts = buffer.split('---');
+                    const completePart = parts.shift();
+                    buffer = parts.join('---');
+
+                    if (completePart && completePart.trim()) {
+                        const lines = completePart.trim().split('\n');
+                        const word = lines[0]?.trim() || 'Unknown Word';
+                        const explanation = lines.slice(1).join('\n').trim();
+                        const cleanWord = word.replace(/\*\*/g, '');
+
+                        if (explanation && word && !existingWords.has(cleanWord)) {
+                            setResults(prev => {
+                                // Avoid adding duplicates during the same stream
+                                if (prev.some(item => item.word === word)) return prev;
+                                return [...prev, { word, explanation }];
+                            });
+                        }
+                    }
+                }
+            }
+            
+            // Process any remaining content in the buffer
+            if (buffer.trim()) {
+                const lines = buffer.trim().split('\n');
+                const word = lines[0]?.trim() || 'Unknown Word';
+                const explanation = lines.slice(1).join('\n').trim();
+                const cleanWord = word.replace(/\*\*/g, '');
+                if (explanation && word && !existingWords.has(cleanWord)) {
+                   setResults(prev => {
+                        if (prev.some(item => item.word === word)) return prev;
+                        return [...prev, { word, explanation }];
+                    });
+                }
+            }
+
         } catch (err) {
             setError(err instanceof Error ? err.message : "An unexpected error occurred.");
         } finally {
             setIsLoading(false);
+            setHasFinished(true);
         }
-    }, [wordInput]);
+    }, [textInput, fileInput, vocabularyEntries]);
 
     const handleSave = () => {
-        if (result) {
-            onAddToLibrary({
-                word: wordInput.trim(),
-                explanation: result,
+        if (results) {
+            results.forEach(result => {
+                onAddToLibrary({
+                    word: result.word.replace(/\*\*/g, ''), // remove markdown for title
+                    explanation: result.explanation,
+                });
             });
-            alert("Saved to library!");
+            alert(`Saved ${results.length} new words to library!`);
         }
     };
 
     return (
         <div className="max-w-3xl mx-auto">
             <h1 className="text-3xl font-bold text-teal-400 mb-2">Vocabulary Explainer</h1>
-            <p className="text-slate-400 mb-6">Enter a Japanese word (単語) to get its meaning and usage examples in Burmese.</p>
+            <p className="text-slate-400 mb-6">Enter a Japanese word, sentence, or upload an image to get definitions in Burmese.</p>
 
-            <div className="flex space-x-2">
-                <input
-                    type="text"
-                    value={wordInput}
-                    onChange={(e) => setWordInput(e.target.value)}
-                    placeholder="e.g., 勉強"
-                    className="flex-grow p-4 bg-slate-800 border-2 border-slate-700 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500 transition duration-200"
+            <div className="space-y-4">
+                <textarea
+                    value={textInput}
+                    onChange={(e) => {
+                        setTextInput(e.target.value);
+                        setFileInput(null);
+                        setFileName('');
+                    }}
+                    placeholder="e.g., 勉強 or 天気がいいから、散歩しましょう。"
+                    className="w-full h-32 p-4 bg-slate-800 border-2 border-slate-700 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500 transition duration-200 resize-none"
                     disabled={isLoading}
-                    onKeyDown={(e) => e.key === 'Enter' && !isLoading && handleSubmit()}
                 />
+
+                <div className="flex items-center justify-center w-full">
+                    <span className="text-slate-500 mx-4">OR</span>
+                </div>
+
+                <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-slate-700 border-dashed rounded-lg cursor-pointer bg-slate-800 hover:bg-slate-700 transition duration-200">
+                    <div className="flex flex-col items-center justify-center pt-5 pb-6">
+                        <svg className="w-8 h-8 mb-4 text-slate-500" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 20 16"><path stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 13h3a3 3 0 0 0 0-6h-.025A5.56 5.56 0 0 0 16 6.5 5.5 5.5 0 0 0 5.207 5.021C5.137 5.017 5.071 5 5 5a4 4 0 0 0 0 8h2.167M10 15V6m0 0L8 8m2-2 2 2"/></svg>
+                        <p className="mb-2 text-sm text-slate-400"><span className="font-semibold">Click to upload</span> or drag and drop</p>
+                        <p className="text-xs text-slate-500">PNG, JPG, or WEBP</p>
+                    </div>
+                    <input id="dropzone-file-vocab" type="file" className="hidden" accept="image/png, image/jpeg, image/webp" onChange={handleFileChange} disabled={isLoading} />
+                </label>
+                {fileName && <p className="text-sm text-center text-slate-400">Selected file: {fileName}</p>}
+
                 <button
                     onClick={handleSubmit}
-                    disabled={isLoading || !wordInput.trim()}
-                    className="flex items-center justify-center bg-teal-600 hover:bg-teal-700 disabled:bg-slate-600 disabled:cursor-not-allowed text-white font-bold py-3 px-6 rounded-lg transition duration-200 shadow-lg"
+                    disabled={isLoading || (!textInput && !fileInput)}
+                    className="w-full flex items-center justify-center bg-teal-600 hover:bg-teal-700 disabled:bg-slate-600 disabled:cursor-not-allowed text-white font-bold py-3 px-4 rounded-lg transition duration-200 shadow-lg"
                 >
-                    {isLoading ? <Spinner /> : 'Explain'}
+                    {isLoading ? <Spinner /> : 'Explain Vocabulary'}
                 </button>
             </div>
             
             {error && <p className="mt-4 text-center text-red-400">{error}</p>}
             
-            {result && (
-                <ResultCard content={result}>
-                    <button onClick={handleSave} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 rounded-lg transition duration-200">
-                        Save to Library
-                    </button>
-                </ResultCard>
+            {(results.length > 0 || isLoading || hasFinished) && (
+                <div className="mt-6 space-y-4">
+                    {hasFinished && results.length === 0 && !isLoading && (
+                        <div className="text-center py-8 text-slate-500 animate-fade-in-up">
+                            No new vocabulary found, or the words identified are already in your library.
+                        </div>
+                    )}
+                    {results.map((result, index) => (
+                        <div 
+                           key={index} 
+                           className="bg-slate-800 rounded-lg shadow-xl p-6 animate-fade-in-up"
+                           style={{ animationDelay: `${index * 100}ms` }}
+                        >
+                            <h3 className="text-lg font-bold text-slate-100 mb-3">
+                               <SimpleMarkdown text={result.word} />
+                            </h3>
+                            <div className="text-slate-300 whitespace-pre-wrap leading-relaxed font-mono">
+                                <SimpleMarkdown text={result.explanation} />
+                            </div>
+                        </div>
+                    ))}
+                     {results.length > 0 && !isLoading && (
+                        <div className="mt-6 border-t border-slate-700 pt-4 animate-fade-in-up" style={{ animationDelay: `${results.length * 100}ms` }}>
+                            <button onClick={handleSave} className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 rounded-lg transition duration-200">
+                                Save All to Library
+                            </button>
+                        </div>
+                     )}
+                </div>
             )}
         </div>
     );
